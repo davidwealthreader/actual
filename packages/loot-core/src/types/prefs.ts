@@ -8,6 +8,7 @@ export type FeatureFlag =
   | 'customThemes'
   | 'budgetAnalysisReport'
   | 'enableBanking'
+  | 'wealthreaderBankSync'
   | 'sankeyReport'
   | 'akahuBankSync'
   | 'mobileCalculator'
