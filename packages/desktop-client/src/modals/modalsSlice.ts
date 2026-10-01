@@ -13,6 +13,7 @@ import type {
   RuleEntity,
   ScheduleEntity,
   SyncServerEnableBankingAccount,
+  SyncServerWealthReaderAccount,
   TransactionEntity,
   UserAccessEntity,
   UserEntity,
@@ -161,6 +162,29 @@ export type Modal =
         onClose?: (() => void) | undefined;
         onSuccess: (data: {
           accounts: SyncServerEnableBankingAccount[];
+        }) => Promise<void>;
+      };
+    }
+  | {
+      name: 'wealthreader-init';
+      options: {
+        onSuccess: () => void;
+      };
+    }
+  | {
+      name: 'wealthreader-external-msg';
+      options: {
+        onMoveExternal: (arg: {
+          entityCode: string;
+          onStateReady?: (state: string) => void;
+        }) => Promise<
+          | { error: 'timeout' }
+          | { error: 'unknown'; message?: string }
+          | { data: { accounts: SyncServerWealthReaderAccount[] } }
+        >;
+        onClose?: (() => void) | undefined;
+        onSuccess: (data: {
+          accounts: SyncServerWealthReaderAccount[];
         }) => Promise<void>;
       };
     }

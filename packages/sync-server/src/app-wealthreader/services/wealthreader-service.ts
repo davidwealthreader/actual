@@ -64,7 +64,43 @@ export type NormalizedAccount = {
 export type PendingPkce = WealthReaderPkce & {
   redirectUri: string;
   entityCode: string;
+  state: string;
 };
+
+export type WealthReaderSession = {
+  token: string;
+  code: string;
+};
+
+export function loadSessions(): Record<string, WealthReaderSession> {
+  const raw = secretsService.get(SecretName.wealthreader_sessions);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, WealthReaderSession>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveAccountSession(
+  accountId: string,
+  token: string,
+  code: string,
+): void {
+  const sessions = loadSessions();
+  sessions[accountId] = { token, code };
+  secretsService.set(
+    SecretName.wealthreader_sessions,
+    JSON.stringify(sessions),
+  );
+}
+
+export function getAccountSession(
+  accountId: string,
+): WealthReaderSession | null {
+  return loadSessions()[accountId] ?? null;
+}
 
 const pendingPkce = new Map<string, PendingPkce>();
 
@@ -155,6 +191,7 @@ export function buildAuthorizeUrl(
     ...challenge,
     redirectUri,
     entityCode,
+    state,
   });
   const query = new URLSearchParams({
     challenge_code: challenge.challenge,

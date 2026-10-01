@@ -14,6 +14,7 @@ import { getFailedSyncError, isAccountFailedSync } from '#accounts/syncStatus';
 import { Link } from '#components/common/Link';
 import { authorizeBank as authorizeEnableBanking } from '#enablebanking';
 import { authorizeBank as authorizeGoCardless } from '#gocardless';
+import { authorizeBank as authorizeWealthReader } from '#wealthreader';
 import { useAccounts } from '#hooks/useAccounts';
 import { useFailedAccounts } from '#hooks/useFailedAccounts';
 import { useDispatch } from '#redux';
@@ -107,6 +108,8 @@ export function AccountSyncCheck() {
       if (acc.account_id) {
         if (acc.account_sync_source === 'enableBanking') {
           void authorizeEnableBanking(dispatch);
+        } else if (acc.account_sync_source === 'wealthreader') {
+          void authorizeWealthReader(dispatch, acc.id);
         } else if (acc.account_sync_source === 'goCardless') {
           void authorizeGoCardless(dispatch);
         }

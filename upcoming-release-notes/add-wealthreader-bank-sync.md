@@ -3,4 +3,4 @@ category: Features
 authors: [davidwealthreader]
 ---
 
-Add experimental Wealth Reader AIS bank sync on the sync-server (OAuth + PKCE). UI linking is behind the `wealthreaderBankSync` flag and still needs loot-core handlers.
+Add experimental Wealth Reader AIS bank sync (OAuth + PKCE). Enable the `wealthreaderBankSync` flag, set your API key, and register `{origin}/wealthreader/auth_callback` with tokenize=1.

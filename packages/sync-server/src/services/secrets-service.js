@@ -20,6 +20,7 @@ export const SecretName = {
   enablebanking_applicationId: 'enablebanking_applicationId',
   enablebanking_secretKey: 'enablebanking_secretKey',
   wealthreader_api_key: 'wealthreader_api_key',
+  wealthreader_sessions: 'wealthreader_sessions',
 };
 
 function getSecretKey(name, fileId) {

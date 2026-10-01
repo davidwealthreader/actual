@@ -11,6 +11,7 @@ import type { SyncServerSimpleFinAccount } from '@actual-app/core/types/models/s
 
 import { authorizeBank as authorizeEnableBanking } from '#enablebanking';
 import { authorizeBank } from '#gocardless';
+import { authorizeBank as authorizeWealthReader } from '#wealthreader';
 import { useAkahuStatus } from '#hooks/useAkahuStatus';
 import { useCurrentAccess } from '#hooks/useCurrentAccess';
 import { useEnableBankingStatus } from '#hooks/useEnableBankingStatus';
@@ -19,6 +20,7 @@ import { useGoCardlessStatus } from '#hooks/useGoCardlessStatus';
 import { usePluggyAiStatus } from '#hooks/usePluggyAiStatus';
 import { useSimpleFinStatus } from '#hooks/useSimpleFinStatus';
 import { useSyncServerStatus } from '#hooks/useSyncServerStatus';
+import { useWealthReaderStatus } from '#hooks/useWealthReaderStatus';
 import { pushModal } from '#modals/modalsSlice';
 import { addNotification } from '#notifications/notificationsSlice';
 import { useDispatch } from '#redux';
@@ -121,6 +123,8 @@ export function useBuiltInBankSyncProviders({
   >(null);
   const [isEnableBankingSetupComplete, setIsEnableBankingSetupComplete] =
     useState<boolean | null>(null);
+  const [isWealthReaderSetupComplete, setIsWealthReaderSetupComplete] =
+    useState<boolean | null>(null);
   const [isAkahuSetupComplete, setIsAkahuSetupComplete] = useState<
     boolean | null
   >(null);
@@ -129,6 +133,7 @@ export function useBuiltInBankSyncProviders({
   const [loadingAkahuAccounts, setLoadingAkahuAccounts] = useState(false);
 
   const enableBankingEnabled = useFeatureFlag('enableBanking');
+  const wealthreaderEnabled = useFeatureFlag('wealthreaderBankSync');
   const akahuEnabled = useFeatureFlag('akahuBankSync');
   const { configuredGoCardless } = useGoCardlessStatus();
   const { configuredSimpleFin } = useSimpleFinStatus();
@@ -136,6 +141,8 @@ export function useBuiltInBankSyncProviders({
   const { configuredAkahu } = useAkahuStatus(akahuEnabled);
   const { configuredEnableBanking, isLoading: isEnableBankingLoading } =
     useEnableBankingStatus(enableBankingEnabled);
+  const { configuredWealthReader, isLoading: isWealthReaderLoading } =
+    useWealthReaderStatus(wealthreaderEnabled);
 
   useEffect(() => {
     setIsGoCardlessSetupComplete(configuredGoCardless);
@@ -148,6 +155,10 @@ export function useBuiltInBankSyncProviders({
   useEffect(() => {
     setIsEnableBankingSetupComplete(configuredEnableBanking);
   }, [configuredEnableBanking]);
+
+  useEffect(() => {
+    setIsWealthReaderSetupComplete(configuredWealthReader);
+  }, [configuredWealthReader]);
 
   useEffect(() => {
     setIsAkahuSetupComplete(configuredAkahu);
@@ -205,6 +216,19 @@ export function useBuiltInBankSyncProviders({
           name: 'enablebanking-init',
           options: {
             onSuccess: () => setIsEnableBankingSetupComplete(true),
+          },
+        },
+      }),
+    );
+  }, [dispatch]);
+
+  const onWealthReaderInit = useCallback(() => {
+    dispatch(
+      pushModal({
+        modal: {
+          name: 'wealthreader-init',
+          options: {
+            onSuccess: () => setIsWealthReaderSetupComplete(true),
           },
         },
       }),
@@ -352,6 +376,28 @@ export function useBuiltInBankSyncProviders({
     }
   }, [notifyResetFailure]);
 
+  const onWealthReaderReset = useCallback(async () => {
+    try {
+      await ensureSuccessResponse(
+        await send('secret-set', {
+          name: 'wealthreader_api_key',
+          value: null,
+        }),
+        'Failed to clear Wealth Reader API key',
+      );
+      await ensureSuccessResponse(
+        await send('secret-set', {
+          name: 'wealthreader_sessions',
+          value: null,
+        }),
+        'Failed to clear Wealth Reader sessions',
+      );
+      setIsWealthReaderSetupComplete(false);
+    } catch (error) {
+      notifyResetFailure('Wealth Reader', error);
+    }
+  }, [notifyResetFailure]);
+
   const onAkahuReset = useCallback(async () => {
     try {
       await ensureSuccessResponse(
@@ -485,6 +531,35 @@ export function useBuiltInBankSyncProviders({
     dispatch,
     isEnableBankingSetupComplete,
     onEnableBankingInit,
+    t,
+    upgradingAccountId,
+  ]);
+
+  const onConnectWealthReader = useCallback(async () => {
+    if (!isWealthReaderSetupComplete) {
+      onWealthReaderInit();
+      return;
+    }
+
+    try {
+      await authorizeWealthReader(dispatch, upgradingAccountId);
+    } catch (error) {
+      dispatch(
+        addNotification({
+          notification: {
+            type: 'error',
+            title: t('Error when trying to contact Wealth Reader'),
+            message: error instanceof Error ? error.message : String(error),
+            timeout: 5000,
+          },
+        }),
+      );
+      onWealthReaderInit();
+    }
+  }, [
+    dispatch,
+    isWealthReaderSetupComplete,
+    onWealthReaderInit,
     t,
     upgradingAccountId,
   ]);
@@ -640,6 +715,7 @@ export function useBuiltInBankSyncProviders({
     simpleFin: Boolean(isSimpleFinSetupComplete),
     pluggyai: Boolean(pluggyAiStatus.configured),
     enableBanking: Boolean(isEnableBankingSetupComplete),
+    wealthreader: Boolean(isWealthReaderSetupComplete),
     akahu: Boolean(isAkahuSetupComplete),
   } satisfies Record<BankSyncProviders, boolean>;
 
@@ -735,12 +811,31 @@ export function useBuiltInBankSyncProviders({
       });
     }
 
+    if (wealthreaderEnabled) {
+      baseProviders.push({
+        id: 'wealthreader',
+        displayName: 'Wealth Reader',
+        description: t(
+          'Link a European bank account via Wealth Reader using your own API key.',
+        ),
+        isConfigured: configuredProviders.wealthreader,
+        credentialSource: 'global',
+        supportsPerBudgetFile: false,
+        canConfigure: canConfigureProviders,
+        isLoading: isWealthReaderLoading,
+        onConfigure: onWealthReaderInit,
+        onLink: onConnectWealthReader,
+        onReset: onWealthReaderReset,
+      });
+    }
+
     return baseProviders;
   }, [
     canConfigureProviders,
     isAdmin,
     isFileOwner,
     configuredProviders.enableBanking,
+    configuredProviders.wealthreader,
     configuredProviders.goCardless,
     configuredProviders.pluggyai,
     configuredProviders.simpleFin,
@@ -748,12 +843,15 @@ export function useBuiltInBankSyncProviders({
     pluggyAiStatus,
     syncServerStatus,
     enableBankingEnabled,
+    wealthreaderEnabled,
     akahuEnabled,
     isEnableBankingLoading,
+    isWealthReaderLoading,
     loadingSimpleFinAccounts,
     loadingAkahuAccounts,
     onConnectAkahu,
     onConnectEnableBanking,
+    onConnectWealthReader,
     onConnectGoCardless,
     onConnectPluggyAi,
     onConnectSimpleFin,
@@ -761,6 +859,8 @@ export function useBuiltInBankSyncProviders({
     onAkahuReset,
     onEnableBankingInit,
     onEnableBankingReset,
+    onWealthReaderInit,
+    onWealthReaderReset,
     onGoCardlessInit,
     onGoCardlessReset,
     onPluggyAiInit,

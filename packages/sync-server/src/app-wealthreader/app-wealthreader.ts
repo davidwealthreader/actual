@@ -14,13 +14,16 @@ import {
   accountBalance,
   buildAuthorizeUrl,
   exchangeCode,
+  getAccountSession,
   isConfigured,
   listEntities,
+  loadPkce,
   normalizeAccount,
   normalizeTransaction,
   payloadAccounts,
   payloadToken,
   refresh,
+  saveAccountSession,
   WealthReaderError,
 } from './services/wealthreader-service';
 
@@ -84,6 +87,7 @@ app.get('/auth_callback', async (req: Request, res: Response) => {
     return;
   }
 
+  const pkce = loadPkce(state, nonce);
   try {
     const data = await exchangeCode(code, state, nonce);
     const { token, code: entityCode } = payloadToken(data);
@@ -96,14 +100,15 @@ app.get('/auth_callback', async (req: Request, res: Response) => {
       .filter(Boolean);
 
     const result = { token, institution: entityCode, accounts };
-    cacheAuthResult([state, nonce], result);
+    // WR may omit state and only return nonce. Wake the poller on both.
+    cacheAuthResult([state, nonce, pkce?.state], result);
     res.send(
       '<html><body><p>Authorization successful. This window will close.</p>' +
         '<script>setTimeout(function(){window.close()},1000)</script></body></html>',
     );
   } catch (error) {
     const errorResult = { error: error instanceof Error ? error.message : 'unknown error' };
-    cacheAuthResult([state, nonce], errorResult);
+    cacheAuthResult([state, nonce, pkce?.state], errorResult);
     debug('Callback auth error: %s', error);
     res.status(500).send(
       '<html><body><p>Authorization failed. You can close this window and try again.</p></body></html>',
@@ -169,39 +174,80 @@ app.post(
 );
 
 app.post(
+  '/complete-auth',
+  handleError(async (req: Request, res: Response) => {
+    const code = typeof req.body?.code === 'string' ? req.body.code : undefined;
+    const state = typeof req.body?.state === 'string' ? req.body.state : undefined;
+    const nonce = typeof req.body?.nonce === 'string' ? req.body.nonce : undefined;
+
+    if (!code || (!state && !nonce)) {
+      res.send({
+        status: 'ok',
+        data: { error_code: 'INVALID_INPUT', error_type: 'Missing code or state/nonce' },
+      });
+      return;
+    }
+
+    const pkce = loadPkce(state, nonce);
+    try {
+      const data = await exchangeCode(code, state, nonce);
+      const { token, code: entityCode } = payloadToken(data);
+      const accounts = payloadAccounts(data)
+        .map(raw => {
+          const normalized = normalizeAccount(raw, entityCode);
+          if (!normalized) return null;
+          return { ...normalized, balance: accountBalance(raw) };
+        })
+        .filter(Boolean);
+
+      const result = { token, institution: entityCode, accounts };
+      cacheAuthResult([state, nonce, pkce?.state], result);
+      res.send({ status: 'ok', data: result });
+    } catch (error) {
+      const errorResult = { error: error instanceof Error ? error.message : 'unknown error' };
+      cacheAuthResult([state, nonce, pkce?.state], errorResult);
+      debug('complete-auth error: %s', error);
+      res.send({ status: 'ok', data: errorResult });
+    }
+  }),
+);
+
+app.post(
   '/poll-auth',
   handleError(async (req: Request, res: Response) => {
-    const { state } = req.body || {};
-    if (!state) {
+    const state = typeof req.body?.state === 'string' ? req.body.state : undefined;
+    const nonce = typeof req.body?.nonce === 'string' ? req.body.nonce : undefined;
+    const key = state || nonce;
+    if (!key) {
       res.send({
         status: 'ok',
         data: { error_code: 'INVALID_INPUT', error_type: 'Missing state' },
       });
       return;
     }
-    if (completedAuths.has(state)) {
-      const result = completedAuths.get(state);
-      completedAuths.delete(state);
+    if (completedAuths.has(key)) {
+      const result = completedAuths.get(key);
+      completedAuths.delete(key);
       res.send({ status: 'ok', data: result });
       return;
     }
     const waiterId = String(++nextWaiterId);
     try {
       const result = await new Promise((resolve, reject) => {
-        const existing = pendingAuths.get(state);
+        const existing = pendingAuths.get(key);
         if (existing) {
           clearTimeout(existing.timer);
           existing.reject(new Error('Poll superseded'));
         }
         const timer = setTimeout(() => {
-          cleanupPendingAuth(state, waiterId);
+          cleanupPendingAuth(key, waiterId);
           reject(new Error('Polling timed out'));
         }, POLL_TIMEOUT_MS);
-        pendingAuths.set(state, { id: waiterId, resolve, reject, timer });
+        pendingAuths.set(key, { id: waiterId, resolve, reject, timer });
       });
       res.send({ status: 'ok', data: result });
     } catch (error) {
-      cleanupPendingAuth(state, waiterId);
+      cleanupPendingAuth(key, waiterId);
       res.send({
         status: 'ok',
         data: { error: error instanceof Error ? error.message : 'unknown error' },
@@ -211,9 +257,28 @@ app.post(
 );
 
 app.post(
+  '/accounts-link',
+  handleError(async (req: Request, res: Response) => {
+    const { accountId, token, entityCode } = req.body || {};
+    if (!accountId || !token || !entityCode) {
+      res.send({
+        status: 'ok',
+        data: { error_code: 'INVALID_INPUT', error_type: 'Missing accountId, token or entityCode' },
+      });
+      return;
+    }
+    saveAccountSession(String(accountId), String(token), String(entityCode));
+    res.send({ status: 'ok', data: { linked: true } });
+  }),
+);
+
+app.post(
   '/transactions',
   handleError(async (req: Request, res: Response) => {
-    const { accountId, startDate, token, entityCode } = req.body || {};
+    const { accountId, startDate } = req.body || {};
+    const session = typeof accountId === 'string' ? getAccountSession(accountId) : null;
+    const token = req.body?.token || session?.token;
+    const entityCode = req.body?.entityCode || session?.code;
     if (!accountId || !startDate || !token || !entityCode) {
       res.send({
         status: 'ok',

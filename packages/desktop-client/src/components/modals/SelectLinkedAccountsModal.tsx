@@ -18,6 +18,7 @@ import type {
   SyncServerGoCardlessAccount,
   SyncServerPluggyAiAccount,
   SyncServerSimpleFinAccount,
+  SyncServerWealthReaderAccount,
 } from '@actual-app/core/types/models';
 import { format as formatDate, parseISO } from 'date-fns';
 
@@ -25,6 +26,7 @@ import {
   useLinkAccountAkahuMutation,
   useLinkAccountEnableBankingMutation,
   useLinkAccountMutation,
+  useLinkAccountWealthReaderMutation,
   useLinkAccountPluggyAiMutation,
   useLinkAccountSimpleFinMutation,
   useUnlinkAccountMutation,
@@ -188,6 +190,12 @@ export type SelectLinkedAccountsModalProps =
     }
   | {
       requisitionId?: undefined;
+      externalAccounts: SyncServerWealthReaderAccount[];
+      syncSource: 'wealthreader';
+      upgradingAccountId?: string;
+    }
+  | {
+      requisitionId?: undefined;
       externalAccounts: SyncServerAkahuAccount[];
       syncSource: 'akahu';
       upgradingAccountId?: string;
@@ -239,6 +247,12 @@ export function SelectLinkedAccountsModal({
             externalAccounts: toSort as SyncServerEnableBankingAccount[],
             upgradingAccountId,
           };
+        case 'wealthreader':
+          return {
+            syncSource: 'wealthreader',
+            externalAccounts: toSort as SyncServerWealthReaderAccount[],
+            upgradingAccountId,
+          };
         default:
           throw new Error(`Unrecognized sync source: ${String(syncSource)}`);
       }
@@ -281,6 +295,7 @@ export function SelectLinkedAccountsModal({
   const linkAccountPluggyAi = useLinkAccountPluggyAiMutation();
   const linkAccountAkahu = useLinkAccountAkahuMutation();
   const linkAccountEnableBanking = useLinkAccountEnableBankingMutation();
+  const linkAccountWealthReader = useLinkAccountWealthReaderMutation();
 
   async function onNext() {
     const chosenLocalAccountIds = Object.values(chosenAccounts);
@@ -361,6 +376,23 @@ export function SelectLinkedAccountsModal({
           propsWithSortedExternalAccounts.syncSource === 'enableBanking'
         ) {
           linkAccountEnableBanking.mutate({
+            externalAccount:
+              propsWithSortedExternalAccounts.externalAccounts[
+                externalAccountIndex
+              ],
+            upgradingId:
+              chosenLocalAccountId !== addOnBudgetAccountOption.id &&
+              chosenLocalAccountId !== addOffBudgetAccountOption.id
+                ? chosenLocalAccountId
+                : undefined,
+            offBudget,
+            startingDate,
+            startingBalance,
+          });
+        } else if (
+          propsWithSortedExternalAccounts.syncSource === 'wealthreader'
+        ) {
+          linkAccountWealthReader.mutate({
             externalAccount:
               propsWithSortedExternalAccounts.externalAccounts[
                 externalAccountIndex
@@ -905,7 +937,8 @@ function getInstitutionName(
     | SyncServerGoCardlessAccount
     | SyncServerSimpleFinAccount
     | SyncServerPluggyAiAccount
-    | SyncServerEnableBankingAccount,
+    | SyncServerEnableBankingAccount
+    | SyncServerWealthReaderAccount,
 ) {
   if (typeof externalAccount?.institution === 'string') {
     return externalAccount?.institution ?? '';

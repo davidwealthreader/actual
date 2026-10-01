@@ -36,6 +36,7 @@ import type {
   SyncServerGoCardlessAccount,
   SyncServerPluggyAiAccount,
   SyncServerSimpleFinAccount,
+  SyncServerWealthReaderAccount,
   TransactionEntity,
 } from '#types/models';
 
@@ -61,6 +62,7 @@ export type AccountHandlers = {
   'pluggyai-accounts-link': typeof linkPluggyAiAccount;
   'akahu-accounts-link': typeof linkAkahuAccount;
   'enablebanking-accounts-link': typeof linkEnableBankingAccount;
+  'wealthreader-accounts-link': typeof linkWealthReaderAccount;
   'account-create': typeof createAccount;
   'account-close': typeof closeAccount;
   'account-reopen': typeof reopenAccount;
@@ -80,6 +82,13 @@ export type AccountHandlers = {
   'enablebanking-poll-auth': typeof enableBankingPollAuth;
   'enablebanking-poll-auth-stop': typeof stopEnableBankingPollAuth;
   'enablebanking-configure': typeof enableBankingConfigure;
+  'wealthreader-status': typeof wealthReaderStatus;
+  'wealthreader-entities': typeof wealthReaderEntities;
+  'wealthreader-start-auth': typeof wealthReaderStartAuth;
+  'wealthreader-complete-auth': typeof wealthReaderCompleteAuth;
+  'wealthreader-poll-auth': typeof wealthReaderPollAuth;
+  'wealthreader-poll-auth-stop': typeof stopWealthReaderPollAuth;
+  'wealthreader-configure': typeof wealthReaderConfigure;
   'simplefin-accounts': typeof simpleFinAccounts;
   'pluggyai-accounts': typeof pluggyAiAccounts;
   'akahu-accounts': typeof akahuAccounts;
@@ -528,6 +537,112 @@ async function linkEnableBankingAccount({
 
   if (id == null) {
     throw new Error('id was not assigned in linkEnableBankingAccount');
+  }
+
+  const syncRes = await bankSync.syncAccount(
+    undefined,
+    undefined,
+    id,
+    externalAccount.account_id,
+    bank.bank_id,
+    startingDate,
+    startingBalance,
+  );
+
+  await handleSyncResponse(syncRes, id);
+
+  connection.send('sync-event', {
+    type: 'success',
+    tables: ['transactions', 'accounts'],
+  });
+
+  return 'ok';
+}
+
+async function linkWealthReaderAccount({
+  externalAccount,
+  upgradingId,
+  offBudget = false,
+  startingDate,
+  startingBalance,
+}: LinkAccountBaseParams & {
+  externalAccount: SyncServerWealthReaderAccount;
+}) {
+  const userToken = await asyncStorage.getItem('user-token');
+  if (!userToken) {
+    throw new Error('unauthorized');
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  const linkRes = await post(
+    serverConfig.WEALTHREADER_SERVER + '/accounts-link',
+    {
+      accountId: externalAccount.account_id,
+      token: externalAccount.token,
+      entityCode: externalAccount.entity_code,
+    },
+    {
+      'X-ACTUAL-TOKEN': userToken,
+    },
+  );
+
+  if (linkRes?.error_code || linkRes?.error) {
+    throw new Error(
+      linkRes.error_type || linkRes.error || 'Wealth Reader link failed',
+    );
+  }
+
+  let id: string | undefined;
+
+  const institution = {
+    name: externalAccount.institution ?? null,
+  };
+
+  const bank = await link.findOrCreateBank(
+    institution,
+    externalAccount.entity_code || externalAccount.account_id,
+  );
+
+  if (upgradingId) {
+    const accRow = await db.first<db.DbAccount>(
+      'SELECT * FROM accounts WHERE id = ?',
+      [upgradingId],
+    );
+
+    if (!accRow) {
+      throw new Error(`Account with ID ${upgradingId} not found.`);
+    }
+
+    id = accRow.id;
+    await db.update('accounts', {
+      id,
+      account_id: externalAccount.account_id,
+      bank: bank.id,
+      account_sync_source: 'wealthreader',
+    });
+  } else {
+    id = uuidv4();
+    await db.insertWithUUID('accounts', {
+      id,
+      account_id: externalAccount.account_id,
+      name: externalAccount.name,
+      official_name: externalAccount.name,
+      bank: bank.id,
+      offbudget: offBudget ? 1 : 0,
+      account_sync_source: 'wealthreader',
+    });
+    await db.insertPayee({
+      name: '',
+      transfer_acct: id,
+    });
+  }
+
+  if (id == null) {
+    throw new Error('id was not assigned in linkWealthReaderAccount');
   }
 
   const syncRes = await bankSync.syncAccount(
@@ -1218,6 +1333,189 @@ async function enableBankingConfigure(config: {
   });
 }
 
+async function wealthReaderStatus() {
+  const userToken = await asyncStorage.getItem('user-token');
+
+  if (!userToken) {
+    return { error: 'unauthorized' };
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  return post(
+    serverConfig.WEALTHREADER_SERVER + '/status',
+    {},
+    {
+      'X-ACTUAL-TOKEN': userToken,
+    },
+  );
+}
+
+async function wealthReaderEntities(country?: string) {
+  const userToken = await asyncStorage.getItem('user-token');
+
+  if (!userToken) {
+    return { error: 'unauthorized' };
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  return post(
+    serverConfig.WEALTHREADER_SERVER + '/entities',
+    { country },
+    {
+      'X-ACTUAL-TOKEN': userToken,
+    },
+  );
+}
+
+async function wealthReaderStartAuth({
+  entityCode,
+  redirectUrl,
+}: {
+  entityCode: string;
+  redirectUrl: string;
+}) {
+  const userToken = await asyncStorage.getItem('user-token');
+
+  if (!userToken) {
+    return { error: 'unauthorized' };
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  return post(
+    serverConfig.WEALTHREADER_SERVER + '/start-auth',
+    { entityCode, redirectUrl },
+    {
+      'X-ACTUAL-TOKEN': userToken,
+    },
+  );
+}
+
+async function wealthReaderCompleteAuth({
+  code,
+  state,
+  nonce,
+}: {
+  code: string;
+  state?: string;
+  nonce?: string;
+}) {
+  if (!code || (!state && !nonce)) {
+    return { error: 'missing-auth-params' };
+  }
+
+  const userToken = await asyncStorage.getItem('user-token');
+
+  if (!userToken) {
+    return { error: 'unauthorized' };
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  return post(
+    serverConfig.WEALTHREADER_SERVER + '/complete-auth',
+    { code, state, nonce },
+    {
+      'X-ACTUAL-TOKEN': userToken,
+    },
+  );
+}
+
+const wealthReaderPollControllers = new Map<string, AbortController>();
+
+async function wealthReaderPollAuth({
+  state,
+  nonce,
+}: {
+  state?: string;
+  nonce?: string;
+}) {
+  const key = state || nonce;
+  if (!key) {
+    return { error: 'missing-state' };
+  }
+
+  const userToken = await asyncStorage.getItem('user-token');
+
+  if (!userToken) {
+    return { error: 'unauthorized' };
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  const controller = new AbortController();
+  wealthReaderPollControllers.set(key, controller);
+
+  try {
+    return await post(
+      serverConfig.WEALTHREADER_SERVER + '/poll-auth',
+      { state, nonce },
+      {
+        'X-ACTUAL-TOKEN': userToken,
+      },
+      310000,
+      controller.signal,
+    );
+  } finally {
+    if (wealthReaderPollControllers.get(key) === controller) {
+      wealthReaderPollControllers.delete(key);
+    }
+  }
+}
+
+async function stopWealthReaderPollAuth({
+  state,
+  nonce,
+}: {
+  state?: string;
+  nonce?: string;
+}) {
+  const key = state || nonce;
+  if (!key) {
+    return 'ok';
+  }
+  const controller = wealthReaderPollControllers.get(key);
+  if (controller) {
+    controller.abort();
+    wealthReaderPollControllers.delete(key);
+  }
+  return 'ok';
+}
+
+async function wealthReaderConfigure(config: { apiKey: string }) {
+  const userToken = await asyncStorage.getItem('user-token');
+
+  if (!userToken) {
+    return { error: 'unauthorized' };
+  }
+
+  const serverConfig = getServer();
+  if (!serverConfig) {
+    throw new Error('Failed to get server config.');
+  }
+
+  return post(serverConfig.WEALTHREADER_SERVER + '/configure', config, {
+    'X-ACTUAL-TOKEN': userToken,
+  });
+}
+
 async function getGoCardlessBanks(country: string) {
   const userToken = await asyncStorage.getItem('user-token');
 
@@ -1777,6 +2075,7 @@ app.method('simplefin-accounts-link', linkSimpleFinAccount);
 app.method('pluggyai-accounts-link', linkPluggyAiAccount);
 app.method('akahu-accounts-link', linkAkahuAccount);
 app.method('enablebanking-accounts-link', linkEnableBankingAccount);
+app.method('wealthreader-accounts-link', linkWealthReaderAccount);
 app.method('account-create', mutator(undoable(createAccount)));
 app.method('account-close', mutator(closeAccount));
 app.method('account-reopen', mutator(undoable(reopenAccount)));
@@ -1796,6 +2095,13 @@ app.method('enablebanking-complete-auth', enableBankingCompleteAuth);
 app.method('enablebanking-poll-auth', enableBankingPollAuth);
 app.method('enablebanking-poll-auth-stop', stopEnableBankingPollAuth);
 app.method('enablebanking-configure', enableBankingConfigure);
+app.method('wealthreader-status', wealthReaderStatus);
+app.method('wealthreader-entities', wealthReaderEntities);
+app.method('wealthreader-start-auth', wealthReaderStartAuth);
+app.method('wealthreader-complete-auth', wealthReaderCompleteAuth);
+app.method('wealthreader-poll-auth', wealthReaderPollAuth);
+app.method('wealthreader-poll-auth-stop', stopWealthReaderPollAuth);
+app.method('wealthreader-configure', wealthReaderConfigure);
 app.method('simplefin-accounts', simpleFinAccounts);
 app.method('pluggyai-accounts', pluggyAiAccounts);
 app.method('akahu-accounts', akahuAccounts);

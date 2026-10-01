@@ -26,6 +26,7 @@ import { BankSyncStatus } from './BankSyncStatus';
 import { CommandBar } from './CommandBar';
 import { ContextMenu } from './ContextMenu';
 import { EnableBankingCallback } from './EnableBankingCallback';
+import { WealthReaderCallback } from './WealthReaderCallback';
 import { FeatureErrorFallback } from './FeatureErrorFallback';
 import { GlobalKeys } from './GlobalKeys';
 import { MobileBankSyncAccountEditPage } from './mobile/banksync/MobileBankSyncAccountEditPage';
@@ -377,6 +378,11 @@ export function FinancesApp() {
                     <Route
                       path="/enablebanking/auth_callback"
                       element={<EnableBankingCallback />}
+                    />
+
+                    <Route
+                      path="/wealthreader/auth_callback"
+                      element={<WealthReaderCallback />}
                     />
 
                     <Route

@@ -40,6 +40,8 @@ import { EditRuleModal } from './modals/EditRuleModal';
 import { EditUserFinanceApp } from './modals/EditUser';
 import { EnableBankingExternalMsgModal } from './modals/EnableBankingExternalMsgModal';
 import { EnableBankingInitialiseModal } from './modals/EnableBankingInitialiseModal';
+import { WealthReaderExternalMsgModal } from './modals/WealthReaderExternalMsgModal';
+import { WealthReaderInitialiseModal } from './modals/WealthReaderInitialiseModal';
 import { EnvelopeBalanceMenuModal } from './modals/EnvelopeBalanceMenuModal';
 import { EnvelopeBudgetMenuModal } from './modals/EnvelopeBudgetMenuModal';
 import { EnvelopeBudgetMonthMenuModal } from './modals/EnvelopeBudgetMonthMenuModal';
@@ -203,6 +205,12 @@ export function Modals() {
 
         case 'enablebanking-external-msg':
           return <EnableBankingExternalMsgModal key={key} {...modal.options} />;
+
+        case 'wealthreader-init':
+          return <WealthReaderInitialiseModal key={key} {...modal.options} />;
+
+        case 'wealthreader-external-msg':
+          return <WealthReaderExternalMsgModal key={key} {...modal.options} />;
 
         case 'gocardless-external-msg':
           return (
